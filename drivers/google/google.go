@@ -1,6 +1,7 @@
 package google
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -29,13 +30,14 @@ type Driver struct {
 	Project           string
 	Tags              string
 	UseExisting       bool
+	OpenPorts         []string
 }
 
 const (
 	defaultZone        = "us-central1-a"
 	defaultUser        = "docker-user"
 	defaultMachineType = "n1-standard-1"
-	defaultImageName   = "ubuntu-os-cloud/global/images/ubuntu-1510-wily-v20160627"
+	defaultImageName   = "ubuntu-os-cloud/global/images/ubuntu-1604-xenial-v20161130"
 	defaultScopes      = "https://www.googleapis.com/auth/devstorage.read_only,https://www.googleapis.com/auth/logging.write,https://www.googleapis.com/auth/monitoring.write"
 	defaultDiskType    = "pd-standard"
 	defaultDiskSize    = 10
@@ -130,6 +132,10 @@ func (d *Driver) GetCreateFlags() []mcnflag.Flag {
 			Usage:  "Don't create a new VM, use an existing one",
 			EnvVar: "GOOGLE_USE_EXISTING",
 		},
+		mcnflag.StringSliceFlag{
+			Name:  "google-open-port",
+			Usage: "Make the specified port number accessible from the Internet, e.g, 8080/tcp",
+		},
 	}
 }
 
@@ -173,7 +179,7 @@ func (d *Driver) DriverName() string {
 func (d *Driver) SetConfigFromFlags(flags drivers.DriverOptions) error {
 	d.Project = flags.String("google-project")
 	if d.Project == "" {
-		return fmt.Errorf("Please specify the Google Cloud Project name using the option --google-project.")
+		return errors.New("no Google Cloud Project name specified (--google-project)")
 	}
 
 	d.Zone = flags.String("google-zone")
@@ -190,6 +196,7 @@ func (d *Driver) SetConfigFromFlags(flags drivers.DriverOptions) error {
 		d.UseInternalIPOnly = flags.Bool("google-use-internal-ip-only")
 		d.Scopes = flags.String("google-scopes")
 		d.Tags = flags.String("google-tags")
+		d.OpenPorts = flags.StringSlice("google-open-port")
 	}
 	d.SSHUser = flags.String("google-username")
 	d.SSHPort = 22
@@ -220,11 +227,11 @@ func (d *Driver) PreCreateCheck() error {
 	instance, _ := c.instance()
 	if d.UseExisting {
 		if instance == nil {
-			return fmt.Errorf("Unable to find instance %q in zone %q.", d.MachineName, d.Zone)
+			return fmt.Errorf("unable to find instance %q in zone %q", d.MachineName, d.Zone)
 		}
 	} else {
 		if instance != nil {
-			return fmt.Errorf("Instance %q already exists in zone %q.", d.MachineName, d.Zone)
+			return fmt.Errorf("instance %q already exists in zone %q", d.MachineName, d.Zone)
 		}
 	}
 
