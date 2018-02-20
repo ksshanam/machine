@@ -177,11 +177,8 @@ func (d *Driver) PreCreateCheck() error {
 	// Downloading boot2docker to cache should be done here to make sure
 	// that a download failure will not leave a machine half created.
 	b2dutils := mcnutils.NewB2dUtils(d.StorePath)
-	if err := b2dutils.UpdateISOCache(d.Boot2DockerURL); err != nil {
-		return err
-	}
-
-	return nil
+	err = b2dutils.UpdateISOCache(d.Boot2DockerURL)
+	return err
 }
 
 func (d *Driver) Create() error {
@@ -258,20 +255,28 @@ func (d *Driver) Create() error {
 }
 
 func (d *Driver) chooseVirtualSwitch() (string, error) {
+	if d.VSwitch == "" {
+		// Default to the first external switche and in the process avoid DockerNAT
+		stdout, err := cmdOut("(Get-VMSwitch -SwitchType External).Name")
+		if err != nil {
+			return "", err
+		}
+
+		switches := parseLines(stdout)
+
+		if len(switches) < 1 {
+			return "", fmt.Errorf("no External vswitch found. A valid vswitch must be available for this command to run. Check https://docs.docker.com/machine/drivers/hyper-v/")
+		}
+
+		return switches[0], nil
+	}
+
 	stdout, err := cmdOut("(Get-VMSwitch).Name")
 	if err != nil {
 		return "", err
 	}
 
 	switches := parseLines(stdout)
-
-	if d.VSwitch == "" {
-		if len(switches) < 1 {
-			return "", fmt.Errorf("no vswitch found. A valid vswitch must be available for this command to run. Check https://docs.docker.com/machine/drivers/hyper-v/")
-		}
-
-		return switches[0], nil
-	}
 
 	found := false
 	for _, name := range switches {

@@ -45,7 +45,8 @@ const (
 )
 
 const (
-	keypairNotFoundCode = "InvalidKeyPair.NotFound"
+	keypairNotFoundCode             = "InvalidKeyPair.NotFound"
+	spotInstanceRequestNotFoundCode = "InvalidSpotInstanceRequestID.NotFound"
 )
 
 var (
@@ -108,6 +109,8 @@ type Driver struct {
 	Endpoint                string
 	DisableSSL              bool
 	UserDataFile            string
+
+	spotInstanceRequestId string
 }
 
 type clientFactory interface {
@@ -558,6 +561,7 @@ func (d *Driver) Base64UserData() (userdata string, err error) {
 	if d.UserDataFile != "" {
 		buf, ioerr := ioutil.ReadFile(d.UserDataFile)
 		if ioerr != nil {
+			log.Warnf("failed to read user data file %q: %s", d.UserDataFile, ioerr)
 			err = errorReadingUserData
 			return
 		}
@@ -571,6 +575,16 @@ func (d *Driver) Create() error {
 		return err
 	}
 
+	if err := d.innerCreate(); err != nil {
+		// cleanup partially created resources
+		d.Remove()
+		return err
+	}
+
+	return nil
+}
+
+func (d *Driver) innerCreate() error {
 	log.Infof("Launching instance...")
 
 	if err := d.createKeyPair(); err != nil {
@@ -637,15 +651,26 @@ func (d *Driver) Create() error {
 		if err != nil {
 			return fmt.Errorf("Error request spot instance: %s", err)
 		}
+		d.spotInstanceRequestId = *spotInstanceRequest.SpotInstanceRequests[0].SpotInstanceRequestId
 
 		log.Info("Waiting for spot instance...")
-		err = d.getClient().WaitUntilSpotInstanceRequestFulfilled(&ec2.DescribeSpotInstanceRequestsInput{
-			SpotInstanceRequestIds: []*string{spotInstanceRequest.SpotInstanceRequests[0].SpotInstanceRequestId},
-		})
-		if err != nil {
-			return fmt.Errorf("Error fulfilling spot request: %v", err)
+		for i := 0; i < 3; i++ {
+			// AWS eventual consistency means we could not have SpotInstanceRequest ready yet
+			err = d.getClient().WaitUntilSpotInstanceRequestFulfilled(&ec2.DescribeSpotInstanceRequestsInput{
+				SpotInstanceRequestIds: []*string{&d.spotInstanceRequestId},
+			})
+			if err != nil {
+				if awsErr, ok := err.(awserr.Error); ok {
+					if awsErr.Code() == spotInstanceRequestNotFoundCode {
+						time.Sleep(5 * time.Second)
+						continue
+					}
+				}
+				return fmt.Errorf("Error fulfilling spot request: %v", err)
+			}
+			break
 		}
-		log.Info("Created spot instance request %v", *spotInstanceRequest.SpotInstanceRequests[0].SpotInstanceRequestId)
+		log.Infof("Created spot instance request %v", d.spotInstanceRequestId)
 		// resolve instance id
 		for i := 0; i < 3; i++ {
 			// Even though the waiter succeeded, eventual consistency means we could
@@ -653,7 +678,7 @@ func (d *Driver) Create() error {
 			// few times just in case
 			var resolvedSpotInstance *ec2.DescribeSpotInstanceRequestsOutput
 			resolvedSpotInstance, err = d.getClient().DescribeSpotInstanceRequests(&ec2.DescribeSpotInstanceRequestsInput{
-				SpotInstanceRequestIds: []*string{spotInstanceRequest.SpotInstanceRequests[0].SpotInstanceRequestId},
+				SpotInstanceRequestIds: []*string{&d.spotInstanceRequestId},
 			})
 			if err != nil {
 				// Unexpected; no need to retry
@@ -856,6 +881,14 @@ func (d *Driver) Remove() error {
 		multierr.Errs = append(multierr.Errs, err)
 	}
 
+	// In case of failure waiting for a SpotInstance, we must cancel the unfulfilled request, otherwise an instance may be created later.
+	// If the instance was created, terminating it will be enough for canceling the SpotInstanceRequest
+	if d.RequestSpotInstance && d.spotInstanceRequestId != "" {
+		if err := d.cancelSpotInstanceRequest(); err != nil {
+			multierr.Errs = append(multierr.Errs, err)
+		}
+	}
+
 	if !d.ExistingKey {
 		if err := d.deleteKeyPair(); err != nil {
 			multierr.Errs = append(multierr.Errs, err)
@@ -867,6 +900,15 @@ func (d *Driver) Remove() error {
 	}
 
 	return multierr
+}
+
+func (d *Driver) cancelSpotInstanceRequest() error {
+	// NB: Canceling a Spot instance request does not terminate running Spot instances associated with the request
+	_, err := d.getClient().CancelSpotInstanceRequests(&ec2.CancelSpotInstanceRequestsInput{
+		SpotInstanceRequestIds: []*string{&d.spotInstanceRequestId},
+	})
+
+	return err
 }
 
 func (d *Driver) getInstance() (*ec2.Instance, error) {
@@ -943,7 +985,8 @@ func (d *Driver) createKeyPair() error {
 
 func (d *Driver) terminate() error {
 	if d.InstanceId == "" {
-		return fmt.Errorf("unknown instance")
+		log.Warn("Missing instance ID, this is likely due to a failure during machine creation")
+		return nil
 	}
 
 	log.Debugf("terminating instance: %s", d.InstanceId)
@@ -951,13 +994,13 @@ func (d *Driver) terminate() error {
 		InstanceIds: []*string{&d.InstanceId},
 	})
 
-	if strings.HasPrefix(err.Error(), "unknown instance") ||
-		strings.HasPrefix(err.Error(), "InvalidInstanceID.NotFound") {
-		log.Warn("Remote instance does not exist, proceeding with removing local reference")
-		return nil
-	}
-
 	if err != nil {
+		if strings.HasPrefix(err.Error(), "unknown instance") ||
+			strings.HasPrefix(err.Error(), "InvalidInstanceID.NotFound") {
+			log.Warn("Remote instance does not exist, proceeding with removing local reference")
+			return nil
+		}
+
 		return fmt.Errorf("unable to terminate instance: %s", err)
 	}
 	return nil
@@ -1156,6 +1199,11 @@ func (d *Driver) configureSecurityGroupPermissions(group *ec2.SecurityGroup) ([]
 }
 
 func (d *Driver) deleteKeyPair() error {
+	if d.KeyName == "" {
+		log.Warn("Missing key pair name, this is likely due to a failure during machine creation")
+		return nil
+	}
+
 	log.Debugf("deleting key pair: %s", d.KeyName)
 
 	_, err := d.getClient().DeleteKeyPair(&ec2.DeleteKeyPairInput{

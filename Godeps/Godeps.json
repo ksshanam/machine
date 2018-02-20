@@ -326,8 +326,9 @@
 			"Rev": "792786c7400a136282c1664665ae0a8db921c6c2"
 		},
 		{
-			"ImportPath": "github.com/pyr/egoscale/src/egoscale",
-			"Rev": "906e88e3bb9cf8c559e45e248db1d09578acf47f"
+			"ImportPath": "github.com/exoscale/egoscale",
+			"Comment": "v0.9.6",
+			"Rev": "ef19347c0fa98812afe9240b049c48cbbf2e5fa9"
 		},
 		{
 			"ImportPath": "github.com/rackspace/gophercloud",
@@ -547,15 +548,15 @@
 		},
 		{
 			"ImportPath": "golang.org/x/crypto/curve25519",
-			"Rev": "beef0f4390813b96e8e68fd78570396d0f4751fc"
+			"Rev": "51714a8c4ac1764f07ab4127d7f739351ced4759"
 		},
 		{
 			"ImportPath": "golang.org/x/crypto/ssh",
-			"Rev": "beef0f4390813b96e8e68fd78570396d0f4751fc"
+			"Rev": "51714a8c4ac1764f07ab4127d7f739351ced4759"
 		},
 		{
 			"ImportPath": "golang.org/x/crypto/ssh/terminal",
-			"Rev": "beef0f4390813b96e8e68fd78570396d0f4751fc"
+			"Rev": "51714a8c4ac1764f07ab4127d7f739351ced4759"
 		},
 		{
 			"ImportPath": "golang.org/x/net/context",
@@ -644,6 +645,14 @@
 		{
 			"ImportPath": "google.golang.org/cloud/internal",
 			"Rev": "975617b05ea8a58727e6c1a06b6161ff4185a9f2"
+		},
+		{
+			"ImportPath": "golang.org/x/crypto/ed25519",
+			"Rev": "51714a8c4ac1764f07ab4127d7f739351ced4759"
+		},
+		{
+			"ImportPath": "golang.org/x/crypto/ed25519/internal/edwards25519",
+			"Rev": "51714a8c4ac1764f07ab4127d7f739351ced4759"
 		}
 	]
 }
